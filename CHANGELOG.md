@@ -4,7 +4,11 @@ All notable changes to this project are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0-beta] - 07/11/2026
+
+First public cut. Beta because it has only been fitted to one machine: the
+`machine` adapter is the part most likely to change once a second one is
+wired up.
 
 ### Added
 

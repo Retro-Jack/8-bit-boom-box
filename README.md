@@ -1,5 +1,10 @@
 # 8-Bit Boom Box
 
+> **Beta — v0.1.0-beta.** It works, and it is driving a real emulator, but it
+> has only ever been fitted to one machine. The `machine` adapter is the part
+> most likely to want changing once a second one is wired up, so treat its
+> shape as provisional and pin a commit if you depend on it.
+
 A cassette deck for an emulated 8-bit machine. It is a photographic boombox
 that sits beside your emulator, takes tape files, drives the transport, and
 tells the person at the keyboard what is going on while a program loads.
