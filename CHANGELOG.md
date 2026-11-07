@@ -39,6 +39,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The readout names the file going past, not the whole tape.** Joining
+  every part with " + " made the name long enough to scroll, and a name that
+  is scrolling is a name you cannot read at a glance. Each part's offset in
+  the concatenated tape is known, so the line names whichever file the tape
+  is in, and changes as it crosses a boundary. A single filename too long for
+  twenty-one columns still scrolls, which is the right fallback.
+
 - **The deck carries no branding.** The logo on the left panel and the
   wordmark on the right belonged to the project it came from. Both are painted
   out, and the empty-bay image is rebuilt from the cleaned deck so the two

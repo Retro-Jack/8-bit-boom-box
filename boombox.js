@@ -116,7 +116,11 @@ export function createBoomBox(options) {
     // is a LIST of files, concatenated, and the machine reads them in turn.
     parts: [],
     bytes: null,
-    name: '',
+    // Where each part starts in the concatenated tape, so the readout can
+    // say which file is going past rather than listing them all.
+    offsets: [],
+    total: 0,
+    showing: -1,
     // The reels turn only once the transport has been engaged from the
     // panel. The motor line alone will not do: on a real machine, asking it
     // to load raises the motor and holds it high while it waits for a
@@ -187,7 +191,8 @@ export function createBoomBox(options) {
     // so that line ends in a stop instead of a dangling comma.
     twCount.textContent = n ? text.count(n) : text.insert;
     twNote.textContent = n > 1 ? text.order : '';
-    fit(twName, n ? deck.name : text.noTape);
+    deck.showing = currentPart();
+    fit(twName, n ? deck.parts[deck.showing].name : text.noTape);
   }
 
   function refresh() {
@@ -205,19 +210,38 @@ export function createBoomBox(options) {
   // ---- the transport -----------------------------------------------------
   function rebuild() {
     const total = deck.parts.reduce((n, p) => n + p.bytes.length, 0);
+    deck.offsets = [];
+    deck.total = total;
+    deck.showing = -1;
     if (!total) {
       deck.bytes = null;
-      deck.name = '';
       return;
     }
     const tape = new Uint8Array(total);
     let at = 0;
     for (const p of deck.parts) {
+      deck.offsets.push(at);
       tape.set(p.bytes, at);
       at += p.bytes.length;
     }
     deck.bytes = tape;
-    deck.name = deck.parts.map((p) => p.name).join(' + ');
+  }
+
+  // Which file is going past. The readout names that one rather than the
+  // whole tape: a three-part title joined with " + " is far too long for
+  // twenty-one columns, so it scrolled, and a name that is scrolling is a
+  // name you cannot read at a glance. One file at a time fits.
+  //
+  // At a boundary the offset lands on the next part's first byte, which is
+  // the right answer: the file just read is finished with, and the one the
+  // machine is about to be asked for is the one worth naming.
+  function currentPart() {
+    const n = deck.parts.length;
+    if (!n) return -1;
+    const at = machine.tape ? machine.tape.progress * deck.total : 0;
+    let i = 0;
+    while (i < n - 1 && at >= deck.offsets[i + 1]) i++;
+    return i;
   }
 
   function arm() {
@@ -244,7 +268,9 @@ export function createBoomBox(options) {
     machine.ejectTape();
     deck.parts = [];
     deck.bytes = null;
-    deck.name = '';
+    deck.offsets = [];
+    deck.total = 0;
+    deck.showing = -1;
     file.value = '';
     progress(null);
     hint('');
@@ -330,6 +356,15 @@ export function createBoomBox(options) {
     if (can.rec !== !!machine.hasRecording) refresh();
     if (!tape) return;
     progress(tape.progress);
+
+    // Name the file the tape is in now, and only re-set it when it changes --
+    // fit() restarts the scroll, so calling it every frame would peg a long
+    // name to its first character for ever.
+    const part = currentPart();
+    if (part !== deck.showing && part >= 0) {
+      deck.showing = part;
+      fit(twName, deck.parts[part].name);
+    }
 
     if (deck.engaged && !tape.played) {
       // A load is not one continuous run of tape: the machine stops the
