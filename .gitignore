@@ -1,0 +1,15 @@
+# Python bytecode from the art tools
+__pycache__/
+*.pyc
+
+# Editor and OS junk
+.DS_Store
+._*
+*~
+.claude/
+node_modules/
+
+# NOTE: art/src/ is deliberately NOT ignored. The render the empty bay is
+# built from is committed, so tools/make-deck-empty.py reproduces the asset
+# from a fresh clone. The emulator this came from ignored it, which meant the
+# build could not be rerun by anyone who had only the repository.

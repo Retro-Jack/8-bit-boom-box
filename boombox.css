@@ -1,0 +1,182 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* 8-Bit Boom Box — a cassette deck for an emulated 8-bit machine.
+ *
+ * Everything here is sized relative to the deck itself, never to the page.
+ * The host decides how big the deck is by setting a width on #tapedeck; the
+ * artwork sets the height, the readout's type is a fraction of the readout's
+ * own height, and the reels and keys are percentages of the deck. Scale the
+ * deck and the whole thing follows.
+ */
+
+/* The house DOS font: a genuine IBM VGA CP437 face, which is what the
+   readout wants to be set in. */
+@font-face {
+  font-family: 'VGA437';
+  src: url(art/fonts/web437-vga.woff) format('woff');
+  font-display: swap;
+}
+
+/* The deck. The host gives it a position and a width; height comes from the
+   artwork, so the box always matches the picture whatever the width. */
+#tapedeck { position: absolute; }
+#tapedeck img { display: block; width: 100%; height: auto; pointer-events: none; }
+
+/* With nothing in the deck you see the bay itself -- spindles, heads,
+   capstan, pinch roller. It is a second photograph of the same machine, laid
+   over the first and revealed when the deck is empty, rather than a swap of
+   the src: both are then in the document from the start, so the bay does not
+   arrive a frame late the first time a tape is ejected.
+   The reels go with it. They are part of the cassette, not the deck, so
+   there is nothing for them to be drawn on. */
+#tapedeck img.bare { position: absolute; left: 0; top: 0; width: 100%; opacity: 0; }
+#tapedeck.empty img.bare { opacity: 1; }
+#tapedeck.empty i { display: none; }
+
+/* Only the reels move, so the deck is one still image and the box holding
+   both reels is a sprite sheet stepped by CSS. No hole is cut for it: the
+   reel hubs are opaque and each frame is a crop of the same photograph, so
+   its border pixels already match what is underneath. */
+#tapedeck i {
+  position: absolute; display: block;
+  background: url(art/deck-reels.webp) 0 0/100% 3700% no-repeat;
+  animation: deckreels 3.6s steps(36) infinite;
+  animation-play-state: paused;
+  pointer-events: none; z-index: 1;
+}
+#tapedeck.on i { animation-play-state: running; }
+
+/* 37 rows for 36 frames: a percentage background-position travels
+   (rows - 1) box heights, so the last row is a repeat of the first and never
+   shows. Without it every step lands between frames. */
+@keyframes deckreels { to { background-position-y: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  #tapedeck.on i { animation: none; }
+}
+
+/* The keys. Each is a hit area carrying the picture of that key pressed,
+   shown by raising its opacity -- one small image per key rather than a
+   second copy of the whole deck, which is 9KB against 771KB.
+   They have to be OPAQUE, and are flattened onto the backing colour when
+   they are cut: a pressed key sits 15px lower, and the gap it leaves at the
+   top has to HIDE the un-pressed key underneath. Transparency there would
+   simply let it show through. */
+#tapedeck .key {
+  position: absolute; z-index: 3; cursor: pointer;
+  background-size: 100% 100%; background-repeat: no-repeat;
+  opacity: 0;
+}
+#tapedeck .key.down { opacity: 1; }
+#tapedeck .key.off { cursor: default; }
+#tapedeck .key[data-key=eject] { background-image: url(art/btn-eject.webp); }
+#tapedeck .key[data-key=next]  { background-image: url(art/btn-next.webp); }
+#tapedeck .key[data-key=rew]   { background-image: url(art/btn-rew.webp); }
+#tapedeck .key[data-key=play]  { background-image: url(art/btn-play.webp); }
+#tapedeck .key[data-key=ff]    { background-image: url(art/btn-ff.webp); }
+#tapedeck .key[data-key=rec]   { background-image: url(art/btn-rec.webp); }
+
+/* ---- the readout -------------------------------------------------------
+   A character grid: seven rows of twenty-one columns, which is what it is.
+   The rows are grid tracks, so they are equal because the grid makes them
+   so, not because a line-height was tuned until they looked it. Each line is
+   pinned to its own row, so one that is hidden leaves its row empty instead
+   of pulling the rest up. */
+#tapewin {
+  position: absolute; z-index: 2; container-type: size;
+  display: grid; grid-template-rows: repeat(7, 1fr); grid-template-columns: 100%;
+  box-sizing: border-box;
+  font-family: 'VGA437', ui-monospace, monospace;
+  color: var(--readout, #35ff6d);
+  text-shadow: 0 0 6px rgba(53, 255, 109, .45);
+  line-height: 1; overflow: hidden;
+  pointer-events: none; white-space: pre;
+}
+
+/* Type is one row high. This face's ascent and descent come to exactly 1em,
+   so the character grid and the glyph grid become the same grid. Columns
+   come from `ch`, which tracks the advance the rasteriser actually uses --
+   0.562 of a row, not the 0.5625 the font file designs for, because Chrome
+   quantises advances; measured, 21ch and 21 advances agree exactly, which is
+   all the grid depends on.
+   100cqh/7 is that height, and it goes on the CHILDREN, not on #tapewin:
+   this element is the container those units resolve against, and a container
+   query unit used on the container itself resolves against its ancestor
+   instead, which would silently size the type off the wrong box.
+   Twenty-one columns is both what fits and the longest line the readout can
+   show. The rules and the progress bar are twenty-one wide too, so every
+   full-width line starts and ends on the same column.
+
+   Each line is a twenty-one column block, centred in the window, with the
+   text centred inside it. What made the count line sit half a character left
+   of the bar and the rules was not the centring: it was that the count ran
+   the full twenty-one columns while they ran twenty. Any two lines of
+   unequal parity centre half a cell apart.
+
+   The nudge centres the ink rather than the cells. Seven rows fill the
+   window exactly, so the cell grid is flush to both edges -- but the ink
+   inside the cells is not centred in them. Measured across the printable
+   set, it runs from the very top of the cell (the quote marks reach it) to
+   1.93px short of the bottom, where the descenders of g j p q y stop. Half
+   of that, 0.0692em, splits the difference, and it is in em so it tracks the
+   type. */
+#tapewin > * {
+  font-size: calc(100cqh / 7); width: 21ch;
+  grid-column: 1; justify-self: center;
+  text-align: center; position: relative; top: 0.0692em;
+}
+
+/* grid-column:1 is not decoration. Two lines may be pinned to the same row --
+   "No tape" joins the progress bar on row four's neighbour -- and an item
+   with an explicit row but an automatic column does not stack, it is placed
+   in the next free column. That silently makes the grid two columns and
+   twice the window wide, and every line sits flush against the left edge
+   instead of centred. */
+#twhint { grid-row: 1; }  #twsep  { grid-row: 2; }
+#twname { grid-row: 3; }  #twbar  { grid-row: 4; }
+#twrule { grid-row: 5; }  #twcount{ grid-row: 6; }
+#twnote { grid-row: 7; }
+
+/* A line scrolls when it will not fit, and sits still when it will. The text
+   is doubled so the loop closes on itself with no jump back. */
+#twname, #twhint { overflow: hidden; }
+
+/* vertical-align:top matters more than it looks. An inline-block sits on the
+   baseline by default, so the line box grows by the strut's descent below it
+   -- a quarter of an em in this face. These two rows cannot grow, being grid
+   tracks, so instead their content would stand 1.25 rows tall inside a
+   one-row cell: the name and the hint would sit off their grid line while
+   every other row sat on it, and the overflow would be clipped. */
+#twname span, #twhint span { display: inline-block; vertical-align: top; }
+
+/* No timing function here on purpose: the script sets it, because the number
+   of steps is the number of characters in the text and only it knows that. */
+#twname.scroll span, #twhint.scroll span { animation: tapescroll infinite; }
+
+/* -50% is exactly one period -- the span holds (text+gap) twice -- so a
+   steps() of the period's character count advances precisely one character
+   per step. A real readout shifts its buffer a character at a time; it has
+   no way to move half of one. */
+@keyframes tapescroll { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+  #twname.scroll span, #twhint.scroll span { animation: none; }
+}
+
+/* Drawn in actual hyphens, not a border: the readout is a character display,
+   so its rules are made of characters like everything else in it. Twenty-one
+   of them is the full width of the grid, which the progress bar and the
+   count line also span, so all three end on the same column. No margin --
+   one cell tall like every other row. */
+#twrule, #twsep { opacity: .55; }
+#twrule::before, #twsep::before { content: '---------------------'; }
+
+/* The hint band earns its divider only when it has something to say;
+   otherwise an empty line and a rule sit there looking like a fault. */
+#tapewin.nohint #twhint, #tapewin.nohint #twsep { display: none; }
+
+/* With no tape there is no name, no bar and no count, so the rule would be a
+   line ruled across an empty readout. And there are two lines to place:
+   they sit either side of the middle row rather than on it, so the pair
+   spans rows three to five and centres on row four with a blank line
+   between them. */
+#tapewin.notape #twrule  { display: none; }
+#tapewin.notape #twname  { grid-row: 3; }
+#tapewin.notape #twcount { grid-row: 5; }

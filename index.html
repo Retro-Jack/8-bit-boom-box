@@ -1,0 +1,228 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>8-Bit Boom Box</title>
+<link rel="stylesheet" href="boombox.css">
+<style>
+  :root { color-scheme: dark; --ink:#e7dfe0; --dim:#9a8f91; --accent:#d98aa0; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px 64px;
+    background: #141115; color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, system-ui, sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: .04em; margin: 0 0 4px; }
+  p.lede { color: var(--dim); margin: 0 0 28px; }
+
+  /* The deck is positioned by the host — here, simply centred at a width.
+     Its height comes from the artwork. */
+  #stage { position: relative; width: 100%; max-width: 900px; margin: 0 auto 28px; }
+  #stage::before { content: ''; display: block; padding-top: 42.25%; }  /* 1200x507 */
+  #tapedeck { left: 0; top: 0; width: 100%; }
+
+  .panel {
+    border: 1px solid #332c33; border-radius: 10px; padding: 18px 20px;
+    background: #1b171c; margin: 0 auto 18px; max-width: 900px;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+              color: var(--accent); margin: 0 0 12px; }
+  button {
+    font: inherit; color: var(--ink); background: #2a2430;
+    border: 1px solid #453c47; border-radius: 7px;
+    padding: 7px 13px; margin: 0 8px 8px 0; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #352d3c; }
+  button:disabled { opacity: .4; cursor: default; }
+  #screen {
+    font-family: 'VGA437', ui-monospace, monospace; font-size: 15px;
+    background: #090a09; color: #35ff6d; border-radius: 6px;
+    padding: 12px 14px; white-space: pre; min-height: 5.4em; margin-bottom: 14px;
+  }
+  ol { color: var(--dim); margin: 0; padding-left: 20px; }
+  ol b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 640px) { body { padding: 20px 10px 48px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>8-Bit Boom Box</h1>
+  <p class="lede">A cassette deck for an emulated 8-bit machine. The machine below is a
+     stand-in: it does not emulate anything, it just behaves the way a tape-loading
+     machine behaves, so the deck has something real to react to.</p>
+
+  <div id="stage"><div id="deck" title="Cassette deck"></div></div>
+
+  <div class="panel">
+    <h2>The stand-in machine</h2>
+    <div id="screen">booting&hellip;</div>
+    <button id="t1">Insert a 1-file tape</button>
+    <button id="t3">Insert a 3-file tape</button>
+    <button id="cmd" disabled>Type the load command</button>
+    <button id="rec">Pretend something was recorded</button>
+  </div>
+
+  <div class="panel">
+    <h2>Try this</h2>
+    <ol>
+      <li>Insert the <b>3-file tape</b>, then <b>type the load command</b> and press
+          <b>play</b> on the deck.</li>
+      <li>Watch the reels turn and the bar fill. The motor stops between blocks and
+          the readout says <b>Please wait.</b></li>
+      <li>When the first file is in, the machine returns to its prompt and the deck
+          says so — it will sit there until you type the command again.</li>
+      <li>Press <b>eject</b> with a tape in to empty the bay, and the deck shows its
+          own mechanism instead of a cassette.</li>
+    </ol>
+  </div>
+</main>
+
+<script type="module">
+import { createBoomBox } from './boombox.js';
+
+// ---------------------------------------------------------------------------
+// A stand-in for a real machine.
+//
+// It implements the adapter the deck expects and nothing else: it reads the
+// tape at a steady rate, stops the motor between blocks the way a real ROM
+// does while it stows a block away, and returns to its prompt at the end of
+// each file to wait for a command. The timings are the ones measured off a
+// real load, so the deck sees roughly what it would see in anger.
+// ---------------------------------------------------------------------------
+const BLOCK_GAP = 2200;        // ms the motor rests between blocks
+const BLOCK_EVERY = 0.16;      // progress covered before the next rest
+const RATE = 0.055;            // progress per second while reading
+
+const screen = document.getElementById('screen');
+const cmdBtn = document.getElementById('cmd');
+
+const machine = {
+  motor: false,
+  tape: null,
+  hasRecording: false,
+
+  // A real machine is at its prompt whenever it is not reading, including
+  // before anything has been asked of it -- so this is derived rather than
+  // tracked. Tracking it separately left the prompt false at boot, which
+  // disabled the demo's own command button and made it look as though
+  // nothing was wired up.
+  _listening: false,
+  _restUntil: 0,
+  _nextRest: BLOCK_EVERY,
+  _bounds: [],                 // progress fractions where a file ends
+  _line: 'READY',
+
+  loadTape(bytes) {
+    this.tape = { progress: 0, played: false };
+    this._nextRest = BLOCK_EVERY;
+    this._restUntil = 0;
+  },
+  ejectTape() {
+    this.tape = null;
+    this.motor = false;
+    this._listening = false;
+  },
+  // The deck asks this to tell "between blocks" from "waiting for you".
+  // Mid-load the machine is listening even while the motor rests, so a block
+  // gap correctly reads as not-at-the-prompt.
+  atPrompt() {
+    return !this._listening;
+  },
+  isTape() {
+    return true;
+  },
+  recordedTape() {
+    return this.hasRecording ? new Uint8Array(512) : new Uint8Array(0);
+  },
+  tapeName() {
+    return 'demo';
+  },
+
+  // Called by the host when the user types the load command.
+  command() {
+    this._listening = true;
+    this._line = 'LOADING';
+  },
+
+  step(dt) {
+    const t = performance.now();
+    if (!this.tape || !this._listening) {
+      this.motor = this._listening;
+      return;
+    }
+    if (t < this._restUntil) {
+      this.motor = false;             // mid-block rest
+      return;
+    }
+    this.motor = true;
+    this.tape.progress = Math.min(1, this.tape.progress + RATE * dt);
+
+    // End of a file: stop and wait to be told what to do next.
+    const hit = this._bounds.find((b) => this.tape.progress >= b && b > 0);
+    if (hit !== undefined) {
+      this._bounds = this._bounds.filter((b) => b !== hit);
+      this._listening = false;
+      this.motor = false;
+      this._line = this._bounds.length ? 'READY' : 'READY  (last file in)';
+      if (!this._bounds.length) this.tape.played = true;
+      return;
+    }
+    if (this.tape.progress >= 1) {
+      this.tape.played = true;
+      this._listening = false;
+      this.motor = false;
+      this._line = 'READY';
+      return;
+    }
+    if (this.tape.progress >= this._nextRest) {
+      this._nextRest += BLOCK_EVERY;
+      this._restUntil = t + BLOCK_GAP;
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+const regions = await fetch('art/regions.json').then((r) => r.json());
+const deck = createBoomBox({
+  mount: document.getElementById('deck'),
+  machine,
+  regions,
+  saveExt: '.bin',
+});
+
+// The host supplies the tapes here instead of a file picker, so the demo
+// works with nothing to hand. The deck's own eject key still opens a picker.
+const insert = (parts) => {
+  deck.eject();
+  machine._bounds = parts.length > 1 ? parts.slice(0, -1).map((_, i) => (i + 1) / parts.length) : [];
+  parts.forEach((name, i) => deck.insert(name, new Uint8Array(4096)));
+  deck.hint(parts.length > 1 ? `${parts.length} programs on the tape, in that order.`
+                             : 'Type the load command, then press play.');
+  machine._line = 'READY';
+};
+document.getElementById('t1').onclick = () => insert(['GAME.BAS']);
+document.getElementById('t3').onclick = () => insert(['LOADER.BAS', 'CODE.BIN', 'SCREEN.BIN']);
+document.getElementById('rec').onclick = () => { machine.hasRecording = true; deck.refresh(); };
+cmdBtn.onclick = () => machine.command();
+
+let prev = performance.now();
+function loop(now) {
+  const dt = Math.min((now - prev) / 1000, 0.25);
+  prev = now;
+  machine.step(dt);
+  deck.frame();
+  cmdBtn.disabled = machine._listening;
+  const pct = machine.tape ? Math.round(machine.tape.progress * 100) : 0;
+  screen.textContent =
+    `NEWBRAIN-ish BASIC\n${machine._line}\n\n` +
+    `motor ${machine.motor ? 'ON ' : 'off'}   tape ${pct}%   ` +
+    `${machine.atPrompt() ? 'at the prompt' : ''}`;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
